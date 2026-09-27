@@ -120,6 +120,19 @@ class CprojTest(unittest.TestCase):
         self.assertIn("Sensor drivers", out)
         self.assertIn("claude -r abc-123", out)
 
+    def test_badge_slots_per_harness(self):
+        self.project("alpha")
+        no_claude = {"CLAUDE_CODE_SESSION_ID": ""}
+        self.run_cproj("pick", "alpha", env={**no_claude, "CODEX_THREAD_ID": "t-42"})
+        self.assertEqual(self.badge("codex-t-42")["name"], "alpha")
+        self.run_cproj("pick", "alpha", env={**no_claude, "HERMES_INTERACTIVE": "1"})
+        self.assertIsNotNone(self.badge("hermes"))
+        self.run_cproj("pick", "alpha", env={**no_claude, "HERMES_INTERACTIVE": "1", "CPROJ_SESSION": "h-7"})
+        self.assertIsNotNone(self.badge("h-7"))
+        self.run_cproj("pick", "alpha", env=no_claude)
+        self.assertIsNotNone(self.badge("shared"))
+        self.assertIn("◆ alpha", self.run_cproj("current", env={**no_claude, "CPROJ_SESSION": "h-7"}))
+
     # ------------------------------------------------------------ status line
 
     def test_statusline_badge_and_cwd_fallback(self):

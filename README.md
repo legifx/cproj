@@ -1,9 +1,12 @@
-# cproj — `/project` for Claude Code
+# cproj — `/project` for Claude Code and every other coding agent
 
-**Jump into any of your projects from inside Claude Code.** Local folders, repos on an SSH server and GitHub all show up in
-one searchable list. Pick one, and Claude gets a compact briefing, tells you in ten lines where things stand, proposes
-the next step (or grills you until the goal is clear) and gets to work. A badge in the status line shows which project
-the session belongs to.
+**Jump into any of your projects from inside your coding agent.** Local folders, repos on an SSH server and GitHub all
+show up in one searchable list. Pick one, and the agent gets a compact briefing, tells you in ten lines where things
+stand, proposes the next step (or grills you until the goal is clear) and gets to work. In Claude Code a badge in the
+status line shows which project the session belongs to.
+
+Built for Claude Code, and a standard [Agent Skill](https://agentskills.io), so the same `/project` works in **Codex,
+Hermes Agent, Cline, pi / oh-my-pi, OpenClaw, OpenCode and Gemini CLI** — see [Other agents](#other-agents).
 
 <p align="center">
   <img src="docs/briefing.svg" alt="/project weather: Claude briefs the project, proposes the next step and shows a project badge in the status line" width="880">
@@ -37,6 +40,7 @@ reads your first message — in one shell call, typically under a second — and
 | **`/project status`** | Every project with loose ends — uncommitted work, unpushed commits, branches that never reached main, PRs waiting for your review, server vs local drift. |
 | **Create projects** | `/project new garden-bot` checks for similar names everywhere, then scaffolds the folder, git, `CLAUDE.md`, `docs/PROGRESS.md`, optionally a GitHub repo. |
 | **Cold storage** | Projects untouched for 120 days drop out of lists and search; `/project cold` shows them and picking one wakes it up. |
+| **Any agent** | One skill for all harnesses: Claude Code runs the index before the model even starts; other agents run it as their first shell call. The CLI ships inside the skill folder. |
 | **Desktop launcher** | `cproj launch` (bind it to a key in your window manager): pick a project → new terminal with Claude in it, new session or resume. |
 
 <p align="center">
@@ -93,7 +97,7 @@ stateDiagram-v2
 
 ## Install
 
-Requirements: Claude Code, Python 3.8+, git. Optional: [`gh`](https://cli.github.com) (logged in) for GitHub, an SSH
+Requirements: Python 3.8+, git, and Claude Code or any agent listed under [Other agents](#other-agents). Optional: [`gh`](https://cli.github.com) (logged in) for GitHub, an SSH
 host alias for the server, a dmenu-style picker such as `fuzzel`, `wofi --dmenu` or `rofi -dmenu` for the launcher.
 
 ```bash
@@ -104,10 +108,49 @@ cd ~/Projects/cproj && ./install.sh
 The installer is idempotent and backs up every file it touches. It
 
 - links `cproj` into `~/.local/bin` and the skills `project` + `project-off` into `~/.claude/skills`,
+  `~/.agents/skills` (the shared skills folder most agents read) and, if present, `~/.hermes/skills/productivity`,
 - adds the status line (only if you do not have one yet) and a `SessionEnd` hook to `~/.claude/settings.json`,
 - binds `ctrl+x p` → `/project` and `ctrl+x o` → `/project-off` in `~/.claude/keybindings.json` (unless taken).
 
-Restart Claude Code and type `/project`. Update with `git pull`; remove with `./install.sh --uninstall`.
+Restart your agent and type `/project`. Update with `git pull`; remove with `./install.sh --uninstall`.
+
+## Other agents
+
+`skills/project` is a plain [Agent Skill](https://agentskills.io) with the CLI bundled in `scripts/cproj.py`, so any
+harness that loads skills can use it — with or without `install.sh`:
+
+```bash
+./install.sh                                        # links into ~/.claude, ~/.agents and ~/.hermes skill folders
+npx skills add legifx/cproj -g                      # or: the skills CLI, for 70+ agents
+hermes skills install legifx/cproj/skills/project   # or: Hermes' own installer (repeat for skills/project-off)
+```
+
+| Agent | Skill folder it reads | Call it with |
+|---|---|---|
+| Claude Code | `~/.claude/skills` | `/project …` · `ctrl+x p` |
+| Codex CLI | `~/.agents/skills` | `$project …` |
+| Hermes Agent | `~/.hermes/skills/<category>` · `skills.external_dirs` | `/project …` |
+| Cline | `~/.agents/skills` · `~/.cline/skills` | `/project` |
+| pi · oh-my-pi | `~/.agents/skills` · `~/.pi/agent/skills` · `~/.omp/agent/skills` | `/skill:project …` |
+| OpenClaw | `~/.agents/skills` · `~/.openclaw/skills` | `/project …` |
+| OpenCode | `~/.agents/skills` · `~/.config/opencode/skills` | `/project` or ask for it |
+| Gemini CLI | `~/.agents/skills` · `~/.gemini/skills` | `/project …` |
+
+Tested end to end with Claude Code and Hermes Agent, and installed with the `skills` CLI; the other rows follow each
+agent's documentation — reports and fixes welcome.
+
+What differs outside Claude Code:
+
+- **The index runs as the first tool call.** Claude Code executes `` !`cproj pick …` `` before the model starts (so
+  does Hermes with `skills.inline_shell: true`); elsewhere the skill tells the agent to run it itself — one extra round-trip.
+- **Questions** use the harness's own question tool when it has one, otherwise a numbered list.
+- **Badge slots**: Claude Code, Codex (`CODEX_THREAD_ID`) and Hermes (via `${HERMES_SESSION_ID}` in the skill) get one
+  badge per session. Other agents share one slot unless you set `CPROJ_SESSION`. Show the active project in any prompt
+  or status bar with `cproj current` (`--json`, `--tsv`).
+- **Status line, SessionEnd hook, keybindings and the resume list** are Claude Code features; handoffs via
+  `/project-off` and switching work everywhere.
+- The bundled CLI works without `install.sh`; put it on your PATH once with
+  `ln -s <skills folder>/project/scripts/cproj.py ~/.local/bin/cproj` to make every call shorter.
 
 ## Usage
 
@@ -127,6 +170,7 @@ Restart Claude Code and type `/project`. Update with `git pull`; remove with `./
 | `cproj status [--fetch]` | Same overview as `/project status` |
 | `cproj sessions NAME` | Claude sessions that worked on a project |
 | `cproj ignore 'server:*backup*'` | Hide projects by name or path glob, optionally for one source |
+| `cproj current [--json\|--tsv]` | The active project of this session — for prompts and status bars of any tool |
 | `cproj launch` | Desktop launcher — bind it to a key, e.g. niri: `Mod+P { spawn "cproj" "launch"; }` |
 | `cproj refresh` | Reload the server/GitHub cache now |
 
@@ -170,7 +214,8 @@ What ends up in Claude's context is what you would otherwise paste yourself: git
 python3 -m unittest discover -s tests -v   # end-to-end tests in a throwaway HOME, no network
 ```
 
-`cproj.py` is a single standard-library file; the skills are plain Markdown in `skills/`. Issues and pull requests welcome.
+The CLI is one standard-library file, `skills/project/scripts/cproj.py` (`cproj.py` at the root is a symlink to it);
+the skills are plain Markdown in `skills/`. Issues and pull requests welcome.
 
 ## License
 

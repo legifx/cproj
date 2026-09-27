@@ -1,31 +1,45 @@
 ---
 name: project
-description: Pick a project (local, SSH server, GitHub — searchable), create one, wake one from cold storage, or list every loose end; brief where it stands and what comes next, then keep working on it. Sets the project badge in the status line. `/project [query | new NAME | status | cold [NAME] | + | -]`
+description: Switch the session to one of the user's projects (local, SSH server, GitHub — searchable), create one, wake one from cold storage, or list every loose end; brief where it stands and what comes next, then keep working on it. Use only when the user explicitly calls /project or asks to open, switch to or create a project. `/project [query | new NAME | status | cold [NAME] | + | -]`
 argument-hint: "[query | new NAME | status | cold [NAME] | + | -]"
 disable-model-invocation: true
-allowed-tools: Bash(cproj:*)
+allowed-tools: Bash(cproj:*), Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/cproj.py:*)
 ---
 
-## Result of `cproj pick $ARGUMENTS`
+## Step 0 — the index
 
-!`cproj pick $ARGUMENTS`
+!`python3 ${CLAUDE_SKILL_DIR}/scripts/cproj.py pick $ARGUMENTS`
+
+**Claude Code** has already run this: the block above is its output and starts with a `CPROJ:` line.
+**Any other agent** — or whenever the block shows no `CPROJ:` line (the raw command, an error, an `[inline-shell …]`
+marker): run this in the shell as the very first step — nothing before it — and treat its output as the block above:
+
+    CPROJ_SESSION=${HERMES_SESSION_ID} cproj pick "<everything the user wrote after /project>"
+
+Use the same `CPROJ_SESSION=${HERMES_SESSION_ID}` prefix, exactly as shown, on **every** later `cproj` call too — it
+keeps this session's badge separate (it is empty and harmless outside Hermes).
+If `cproj` is not on your PATH, use the copy bundled with this skill with the same arguments:
+`python3 <folder of this SKILL.md>/scripts/cproj.py` (Hermes: `${HERMES_SKILL_DIR}/scripts/cproj.py`).
+
+**Ask** below means: your harness's structured question tool if it has one (in Claude Code `AskUserQuestion`), with
+2–4 options and a free-text escape; otherwise a short numbered list in your reply, then wait for the answer.
 
 ## What to do
 
-The output above starts with a `CPROJ:` line. L/S/G = the project exists locally, on the SSH server, on GitHub.
+The output starts with a `CPROJ:` line. L/S/G = the project exists locally, on the SSH server, on GitHub.
 Everything before a project is chosen must be **fast**: no other tools, no reading — ask right away.
 
 | `CPROJ:` | What you do |
 |---|---|
 | `LEFT <old> (…)` | Printed before `PICKED`: the session switched projects. First do the **handoff** for `<old>` (below), then continue with the new one. |
 | `PICKED <name>` | The briefing follows → step 1. |
-| `CHOOSE` | Immediately `AskUserQuestion` “Which project?”: the top 3 of the list (label = name, description = `L/S/G · seen … · description`, short) plus an option **“Create a new project”**. Question text: “Or type a name or search term under *Other*.” |
-| `AMBIGUOUS` | Immediately `AskUserQuestion` with the 4 best matches (Other = search differently). |
-| `NO MATCH` | Immediately `AskUserQuestion`: **“Create: <query>”** (first), the 2 closest projects, “Search differently”. |
-| `IN COLD STORAGE` | One sentence, then `AskUserQuestion`: “Wake it” / “Search differently”. |
-| `COLD` | List cold projects briefly (name · where · quiet for how long), then `AskUserQuestion` “Which one to wake?” with 3 plausible ones + Other → `cproj pick "cold <name>"`. |
+| `CHOOSE` | Immediately **Ask** “Which project?”: the top 3 of the list (label = name, description = `L/S/G · seen … · description`, short) plus an option **“Create a new project”**. Question text: “Or type a name or search term under *Other*.” |
+| `AMBIGUOUS` | Immediately **Ask** with the 4 best matches (Other = search differently). |
+| `NO MATCH` | Immediately **Ask**: **“Create: <query>”** (first), the 2 closest projects, “Search differently”. |
+| `IN COLD STORAGE` | One sentence, then **Ask**: “Wake it” / “Search differently”. |
+| `COLD` | List cold projects briefly (name · where · quiet for how long), then **Ask** “Which one to wake?” with 3 plausible ones + Other → `cproj pick "cold <name>"`. |
 | `WOKEN <name>` | Came back from cold storage: mention how long it was quiet and check whether dependencies and docs still hold. Then as `PICKED`. |
-| `STATUS` | Overview (`/project status`, add `fetch` to fetch remotes first). Answer with the 3–5 most important loose ends (PRs waiting for review, commits that never reach main, local vs server drift, lots of uncommitted work), half a sentence each on why. Then `AskUserQuestion` “Where to start?” → `cproj pick "<name>"`. |
+| `STATUS` | Overview (`/project status`, add `fetch` to fetch remotes first). Answer with the 3–5 most important loose ends (PRs waiting for review, commits that never reach main, local vs server drift, lots of uncommitted work), half a sentence each on why. Then **Ask** “Where to start?” → `cproj pick "<name>"`. |
 | `NEW <name>` | → Creating (below). If similar projects are listed, first ask whether one of them is meant. |
 | `CREATED <name>` | The project exists now, the briefing follows → step 1, then grill me about the goal. |
 | `DESELECTED …` / `NO PROJECT` / `CANCELLED` | As in `/project-off`: one sentence, done. |
@@ -36,7 +50,7 @@ again a `CPROJ:` line, same table); “Create a new project” → Creating.
 ### Creating
 
 1. Settle the name (short, kebab-case) if it is missing.
-2. **One** `AskUserQuestion` with up to three questions: *Where?* (local (Recommended) / SSH server — only if one is
+2. **One** **Ask** with up to three questions: *Where?* (local (Recommended) / SSH server — only if one is
    configured), *GitHub?* (private repo (Recommended) / public / none — local only), *What is it about?* (2–3 one-liners
    guessed from the conversation as options, Other for free text).
 3. `cproj new <name> --where=local|server --github=private|public|none --desc="<one sentence>"`. It checks once more for
@@ -54,7 +68,7 @@ it was picked; add what you did yourself):
    It appears in the next briefing under “Recent handoffs”, also for projects without status docs.
 2. If the project's own rules require an entry (a log in PROGRESS, HANDOFF.md) and it is missing: add it briefly.
 3. Name uncommitted changes, never commit them unasked.
-Nothing to do if nothing happened. If the user just closes the terminal, the SessionEnd hook records a mechanical
+Nothing to do if nothing happened. In Claude Code, if the user just closes the terminal, the SessionEnd hook records a mechanical
 handoff (commits / uncommitted files).
 
 ### 1. Complete the context — briefly, in parallel, no tour of the repo
@@ -81,19 +95,19 @@ old session is worth it (long work, same thread), mention its `claude -r …` co
 
 ### 3. Let the user decide
 
-- **Next step is clear** (HANDOFF/PROGRESS names it, a PR waits, uncommitted work is pending): `AskUserQuestion`
+- **Next step is clear** (HANDOFF/PROGRESS names it, a PR waits, uncommitted work is pending): **Ask**
   “What next?” — options: your proposal “(Recommended)”, up to two alternatives from the open items, and
   **“Grill me”** (“I ask pointed questions until it is clear what you want”).
 - **Not clear** (no status docs, long abandoned, contradictory) → grill me right away.
 - If the user rejects the question, do not ask again: put the options as a numbered list in the text and wait.
 
-**Grill me:** one question per round via `AskUserQuestion`, 2–4 concrete options from the project's state (recommended
+**Grill me:** one question per round via **Ask**, 2–4 concrete options from the project's state (recommended
 first), at most ~5 rounds. Each question sharpens the goal, the scope or the done criterion. As soon as you can state
 the task in one sentence plus a done criterion: say it, then start.
 
 ### 4. Keep working
 
-Work on the project normally and follow its own rules (CLAUDE.md, HANDOFF.md, git identity, commit rules).
+Work on the project normally and follow its own rules (CLAUDE.md / AGENTS.md, HANDOFF.md, git identity, commit rules).
 
 Switch: another `/project <other>` — do the handoff first. Deselect: `/project-off`. `/project +` opens the GUI picker
 instead. Refresh the cache (new repo on the server/GitHub): `cproj refresh`.
