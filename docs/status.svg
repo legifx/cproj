@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="880" height="300" viewBox="0 0 880 300" role="img" aria-label="/project status lists every project with loose ends: uncommitted work, unpushed commits, PRs waiting for review, local versus server drift">
+  <defs>
+    <style>
+      text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 14px; fill: #c9d1d9; white-space: pre; }
+      .dim { fill: #7d8590; }
+      .prompt { fill: #e3b341; }
+      .marker { fill: #56d4dd; }
+      .name { fill: #f0f6fc; font-weight: 700; }
+      .warn { fill: #f0b072; }
+      .hot { fill: #ff7b72; }
+      .ok { fill: #a5d6a7; }
+    </style>
+  </defs>
+  <rect width="880" height="300" rx="12" fill="#0d1117"/>
+  <rect width="880" height="36" rx="12" fill="#161b22"/>
+  <rect y="24" width="880" height="12" fill="#161b22"/>
+  <circle cx="22" cy="18" r="6" fill="#ff5f56"/><circle cx="42" cy="18" r="6" fill="#ffbd2e"/><circle cx="62" cy="18" r="6" fill="#27c93f"/>
+  <text x="440" y="23" text-anchor="middle" class="dim">claude — /project status</text>
+
+  <text x="24" y="70"><tspan class="prompt">&gt; </tspan>/project status</text>
+  <text x="24" y="96" class="marker">⏺ CPROJ: STATUS — 5 projects with loose ends</text>
+
+
+  <text x="24" y="130" class="name">api-gateway</text><text x="190" y="130" class="dim">L·G</text><text x="240" y="130" class="dim" text-anchor="end" transform="translate(40 0)">2h</text><text x="300" y="130" class="hot">3 open PRs (2 by others → review)</text>
+  <text x="24" y="156" class="name">garden-bot</text><text x="190" y="156" class="dim">LS·</text><text x="240" y="156" class="dim" text-anchor="end" transform="translate(40 0)">1d</text><text x="300" y="156" class="hot">server has commits local doesn't know</text>
+  <text x="24" y="182" class="name">blog</text><text x="190" y="182" class="dim">L·G</text><text x="240" y="182" class="dim" text-anchor="end" transform="translate(40 0)">5d</text><text x="300" y="182" class="warn">branch draft/rss: 4 commits not in origin/main</text>
+  <text x="24" y="208" class="name">weather-station</text><text x="190" y="208" class="dim">L·G</text><text x="240" y="208" class="dim" text-anchor="end" transform="translate(40 0)">2h</text><text x="300" y="208" class="warn">3 uncommitted · 1 unpushed</text>
+  <text x="24" y="234" class="name">dotfiles</text><text x="190" y="234" class="dim">L·G</text><text x="240" y="234" class="dim" text-anchor="end" transform="translate(40 0)">12d</text><text x="300" y="234" class="warn">7 unpushed</text>
+  <text x="24" y="274" class="dim">L/S/G = local · SSH server · GitHub</text>
+  <text x="856" y="274" class="dim" text-anchor="end">Claude picks the 3–5 that matter and asks where to start.</text>
+</svg>

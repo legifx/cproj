@@ -1,0 +1,24 @@
+{
+  "projects_dirs": ["~/Projects", "~/work"],
+  "skip_dirs": ["archive"],
+
+  "server": {
+    "host": "myserver",
+    "roots": ["~", "/srv/projects"],
+    "new_root": "~",
+    "exclude": ["backups", "*_backup*", "backup_*", "bin", "snap", "node_modules", ".*"]
+  },
+
+  "github": true,
+  "cold_days": 120,
+
+  "git_identity": { "name": "your-github-login", "email": "12345+your-github-login@users.noreply.github.com" },
+  "template_dir": "~/.config/cproj/template",
+  "on_create": ["my-tracker", "add", "{name}", "{path}"],
+
+  "index_md": "~/Projects/INDEX.md",
+  "registry_json": "~/.config/my-tracker/projects.json",
+
+  "picker": ["fuzzel", "--dmenu", "--index", "--no-sort", "-p", "  ", "-w", "40", "-l", "10"],
+  "terminal": ["ghostty", "--working-directory={dir}", "--title={title}", "-e"]
+}

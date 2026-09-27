@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="880" height="468" viewBox="0 0 880 468" role="img" aria-label="Claude Code session: /project weather picks the project, briefs its status, proposes the next step and shows the project badge in the status line">
+  <defs>
+    <style>
+      text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 14px; fill: #c9d1d9; white-space: pre; }
+      .dim { fill: #7d8590; }
+      .prompt { fill: #e3b341; }
+      .marker { fill: #56d4dd; }
+      .bold { font-weight: 700; fill: #f0f6fc; }
+      .green { fill: #a5d6a7; }
+      .accent { fill: #d2a8ff; }
+      .sel { fill: #f0f6fc; font-weight: 700; }
+      .badge { fill: #0d1117; font-weight: 700; }
+    </style>
+  </defs>
+  <rect width="880" height="468" rx="12" fill="#0d1117"/>
+  <rect width="880" height="36" rx="12" fill="#161b22"/>
+  <rect y="24" width="880" height="12" fill="#161b22"/>
+  <circle cx="22" cy="18" r="6" fill="#ff5f56"/><circle cx="42" cy="18" r="6" fill="#ffbd2e"/><circle cx="62" cy="18" r="6" fill="#27c93f"/>
+  <text x="440" y="23" text-anchor="middle" class="dim">claude — ~/Projects</text>
+
+  <text x="24" y="70"><tspan class="prompt">&gt; </tspan>/project weather</text>
+  <text x="24" y="96" class="marker">⏺ CPROJ: PICKED weather-station   <tspan class="dim">(briefing: git, docs, handoffs, sessions, PRs)</tspan></text>
+
+  <text x="24" y="130"><tspan class="bold">weather-station</tspan><tspan class="dim"> · local + GitHub · last active 2h ago</tspan></text>
+  <text x="24" y="154"><tspan class="bold">Status:</tspan> BME280 and rain-gauge drivers are done; the MQTT bridge was started yesterday.</text>
+  <text x="24" y="178"><tspan class="bold">Open:</tspan> 3 uncommitted files · PR #12 “Add wind sensor” waits for your review</text>
+  <text x="24" y="202"><tspan class="bold">Handoff:</tspan> “Bridge connects, reconnect logic missing — next: retry test.”</text>
+  <text x="24" y="226"><tspan class="bold">My proposal:</tspan> finish the reconnect logic and add the retry test —</text>
+  <text x="24" y="250">done when <tspan class="accent">make test</tspan> is green.</text>
+
+  <rect x="24" y="272" width="832" height="118" rx="8" fill="none" stroke="#30363d"/>
+  <text x="44" y="298" class="bold">What next?</text>
+  <text x="44" y="324" class="sel">❯ 1. Finish the MQTT reconnect  <tspan class="green">(Recommended)</tspan></text>
+  <text x="44" y="348">  2. Review PR #12</text>
+  <text x="44" y="372">  3. Grill me <tspan class="dim">— I ask pointed questions until it is clear what you want</tspan></text>
+
+  <line x1="24" y1="412" x2="856" y2="412" stroke="#30363d"/>
+  <rect x="24" y="424" width="170" height="26" rx="4" fill="#a5d6a7"/>
+  <text x="34" y="442" class="badge">◆ weather-station</text>
+  <text x="204" y="442" class="green">local</text>
+  <text x="262" y="442" class="dim">Opus   ~/Projects/weather-station</text>
+</svg>
