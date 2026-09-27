@@ -185,7 +185,7 @@ def server_scan_script():
             ' ts=$(git -C "$d" log -1 --format=%ct 2>/dev/null || stat -c %Y "$d"); '
             'url=$(git -C "$d" config --get remote.origin.url 2>/dev/null)\n'
             " desc=$(grep -m1 -E '^\\s*(\\*\\*)?[[:alpha:]]' \"$d/README.md\" 2>/dev/null "
-            "| grep -vE '^\\s*(cd|npm|pip|git|sudo) ' | cut -c1-140)\n"
+            "| grep -vE '^\\s*(cd|npm|pip|git) ' | cut -c1-140)\n"
             ' printf \'%s\\t%s\\t%s\\t%s\\n\' "${ts:-0}" "$d" "$url" "$desc"; fi; done')
 
 
@@ -416,12 +416,13 @@ def gui_pick(lines, prompt=None):
 def session_id():
     """Which badge slot this call belongs to: $CPROJ_SESSION, else the harness's own session id (Codex, Gemini CLI,
     Claude Code), else one slot per harness ("hermes") or a single "shared" one."""
-    env = os.environ.get
-    harness = next((f"{name}-{env(var)}" for name, var in (("codex", "CODEX_THREAD_ID"), ("gemini", "GEMINI_SESSION_ID"))
-                    if env(var)), None)
-    if not harness and (env("HERMES_INTERACTIVE") or env("_HERMES_GATEWAY")):
-        harness = "hermes"  # Hermes shells carry no session id; don't borrow an inherited Claude one
-    return env("CPROJ_SESSION") or harness or env("CLAUDE_CODE_SESSION_ID") or env("CLAUDE_SESSION_ID") or "shared"
+    ids = {k: os.environ.get(k) for k in ("CPROJ_SESSION", "CODEX_THREAD_ID", "GEMINI_SESSION_ID",
+                                          "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")}
+    harness = (f"codex-{ids['CODEX_THREAD_ID']}" if ids["CODEX_THREAD_ID"] else
+               f"gemini-{ids['GEMINI_SESSION_ID']}" if ids["GEMINI_SESSION_ID"] else
+               "hermes" if os.environ.get("HERMES_INTERACTIVE") or os.environ.get("_HERMES_GATEWAY") else None)
+    # Hermes shells carry no session id — "hermes" keeps them from borrowing an inherited Claude one
+    return ids["CPROJ_SESSION"] or harness or ids["CLAUDE_CODE_SESSION_ID"] or ids["CLAUDE_SESSION_ID"] or "shared"
 
 
 def current(fmt="plain"):
