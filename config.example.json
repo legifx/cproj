@@ -14,6 +14,7 @@
 
   "git_identity": { "name": "your-github-login", "email": "12345+your-github-login@users.noreply.github.com" },
   "template_dir": "~/.config/cproj/template",
+  "temp_dir": "~/.local/share/cproj/temp",
   "on_create": ["my-tracker", "add", "{name}", "{path}"],
 
   "index_md": "~/Projects/INDEX.md",

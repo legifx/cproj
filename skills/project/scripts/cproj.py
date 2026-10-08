@@ -20,6 +20,9 @@ and sessions per project. Standard library only.
   cproj statusline                 status line command (reads Claude Code's JSON on stdin)
   cproj session-end                SessionEnd hook (reads the hook JSON on stdin)
   cproj refresh                    reload the server/GitHub cache now
+  cproj temp NAME [--desc=TEXT]    create (or find) a temporary project, prints {"key","path"} as JSON
+  cproj drop NAME                  delete a temporary project (refuses normal ones)
+  cproj keep NAME                  turn a temporary project into a normal one (moves it to projects_dirs)
 
 Configuration: ~/.config/cproj/config.json (see config.example.json). Everything is optional.
 Badge slot: Claude Code's session id; elsewhere $CPROJ_SESSION, or one shared slot.
@@ -58,6 +61,7 @@ DEFAULTS = {
     "git_identity": None,
     "picker": ["fuzzel", "--dmenu", "--index", "--no-sort", "-p", "  ", "-w", "40", "-l", "10"],
     "terminal": None,
+    "temp_dir": "~/.local/share/cproj/temp",
 }
 SERVER_DEFAULTS = {"host": None, "roots": ["~"], "new_root": "~",
                    "exclude": ["backups", "*_backup*", "backup_*", "bin", "snap", "node_modules", ".*"]}
@@ -81,6 +85,8 @@ PROJECT_DIRS = [Path(os.path.expanduser(d)) for d in CFG["projects_dirs"]]
 SERVER = CFG["server"]
 SSH = ["ssh", "-o", "ConnectTimeout=4", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR", SERVER["host"]] if SERVER else []
 COLD_DAYS = CFG["cold_days"]
+TEMP_DIR = Path(os.path.expanduser(CFG["temp_dir"]))
+TEMP_MARK = ".cproj-temp"
 
 
 def sh(cmd, timeout=10, cwd=None):
@@ -163,15 +169,25 @@ def local_projects():
     dirs = {p.resolve() for base in PROJECT_DIRS if base.is_dir() for p in base.iterdir()
             if p.is_dir() and not p.name.startswith(".") and p.name not in skip}
     dirs |= {Path(r["path"]).resolve() for r in reg.values() if r.get("path") and Path(r["path"]).is_dir()}
+    if TEMP_DIR.is_dir():
+        dirs |= {p.resolve() for p in TEMP_DIR.iterdir() if (p / TEMP_MARK).is_file()}
 
     def one(d):
         k = key_of(d.name)
         ts = sh(["git", "-C", str(d), "log", "-1", "--format=%ct"], 3).strip()
         r, i = reg.get(k, {}), idx.get(k, {})
-        return {"key": k, "name": d.name, "local": str(d),
-                "desc": i.get("desc") or r.get("note") or "", "status": i.get("status") or r.get("status") or "",
-                "entry": i.get("entry"), "updated": int(ts) if ts.isdigit() else int(d.stat().st_mtime),
-                "github": gh_slug(git_origin(d))}
+        e = {"key": k, "name": d.name, "local": str(d),
+             "desc": i.get("desc") or r.get("note") or "", "status": i.get("status") or r.get("status") or "",
+             "entry": i.get("entry"), "updated": int(ts) if ts.isdigit() else int(d.stat().st_mtime),
+             "github": gh_slug(git_origin(d))}
+        mark = d / TEMP_MARK
+        if mark.is_file():
+            try:
+                e["desc"] = e["desc"] or json.loads(mark.read_text()).get("desc", "")
+            except ValueError:
+                pass
+            e.update(temp=True, status="temp")
+        return e
     with ThreadPoolExecutor(16) as ex:
         return list(ex.map(one, sorted(dirs)))
 
@@ -326,7 +342,7 @@ def load_all():
         e = (by_gh.get(item.get("github")) if item.get("github") else None) or by_key.get(item["key"])
         if e is None:
             e = by_key[item["key"]] = {"key": item["key"], "name": item["name"], "desc": "", "status": "", "updated": 0}
-        for f in ("local", "server", "github", "github_name", "entry", "desc", "status"):
+        for f in ("local", "server", "github", "github_name", "entry", "desc", "status", "temp"):
             if item.get(f) and not e.get(f):
                 e[f] = item[f]
         e["updated"] = max(e["updated"], item.get("updated") or 0)
@@ -788,6 +804,48 @@ def new_project(name, where_="local", github="none", desc="", force=False):
     print(brief(entry))
 
 
+# ---------------------------------------------------------------- temporary projects
+
+def temp_project(name, desc=""):
+    """A throwaway project (no git, no duplicate check) — e.g. one per agent session to resume."""
+    if not name:
+        return print("CPROJ: ERROR — temp needs a NAME.")
+    d = TEMP_DIR / name
+    d.mkdir(parents=True, exist_ok=True)
+    mark = d / TEMP_MARK
+    if not mark.exists() or desc:
+        mark.write_text(json.dumps({"created": int(time.time()), "desc": desc}, ensure_ascii=False))
+    print(json.dumps({"key": key_of(name), "path": str(d)}))
+
+
+def temp_entry(query):
+    d = TEMP_DIR / query
+    if (d / TEMP_MARK).is_file():
+        return d
+    hits = [p for p in TEMP_DIR.glob("*") if (p / TEMP_MARK).is_file() and key_of(p.name) == key_of(query)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def drop_temp(query):
+    d = temp_entry(query)
+    if not d:
+        return print(f"CPROJ: no temporary project “{query}” — normal projects are never deleted.")
+    shutil.rmtree(d)
+    print(f"CPROJ: DROPPED {d.name}")
+
+
+def keep_temp(query):
+    d = temp_entry(query)
+    if not d:
+        return print(f"CPROJ: no temporary project “{query}”.")
+    target = PROJECT_DIRS[0] / d.name
+    if target.exists():
+        return print(f"CPROJ: ERROR — {tilde(target)} already exists.")
+    shutil.move(str(d), str(target))
+    (target / TEMP_MARK).unlink(missing_ok=True)
+    print(f"CPROJ: KEPT {d.name} → {tilde(target)}")
+
+
 # ---------------------------------------------------------------- status overview
 
 def local_git_state(e):
@@ -1031,6 +1089,12 @@ def main(argv):
     if cmd == "new":
         return new_project(re.sub(r"[^A-Za-z0-9._-]+", "-", query).strip("-"), opt("where", "local"),
                            opt("github", "none"), opt("desc", ""), "--force" in args)
+    if cmd == "temp":
+        return temp_project(re.sub(r"[^A-Za-z0-9._-]+", "-", query).strip("-"), opt("desc", ""))
+    if cmd == "drop":
+        return drop_temp(query)
+    if cmd == "keep":
+        return keep_temp(query)
     if cmd == "list":
         items = load_index(cold=True if "--json" in args or "--all" in args else "only" if "--cold" in args else False)
         return print(json.dumps(items, ensure_ascii=False, indent=1) if "--json" in args

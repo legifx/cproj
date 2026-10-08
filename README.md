@@ -173,6 +173,9 @@ What differs outside Claude Code:
 | `cproj current [--json\|--tsv]` | The active project of this session — for prompts and status bars of any tool |
 | `cproj launch` | Desktop launcher — bind it to a key, e.g. niri: `Mod+P { spawn "cproj" "launch"; }` |
 | `cproj refresh` | Reload the server/GitHub cache now |
+| `cproj temp NAME [--desc=TEXT]` | Create (or find) a temporary project in `temp_dir`; prints `{"key","path"}` — e.g. one per agent session to resume after a reboot |
+| `cproj drop NAME` | Delete a temporary project (normal projects are never touched) |
+| `cproj keep NAME` | Turn a temporary project into a normal one (moved to the first `projects_dirs` entry) |
 
 ## Configuration
 
@@ -188,6 +191,7 @@ Copy [`config.example.json`](config.example.json) to `~/.config/cproj/config.jso
 | `cold_days` | `120` | After how many quiet days a project moves to cold storage |
 | `git_identity` | git's own | `{"name", "email"}` for the first commit of new projects |
 | `template_dir` | built-in | Your own skeleton for new projects; `{name}`, `{desc}`, `{date}` are filled in |
+| `temp_dir` | `~/.local/share/cproj/temp` | Where `cproj temp` puts throwaway projects (marked by a `.cproj-temp` file, status `temp`) |
 | `on_create` | none | Command run after creating, e.g. to register the project elsewhere (`{name}`, `{path}`, `{desc}`) |
 | `index_md` | none | A markdown table `\| **name** \| description \| status \| … \| entry file \|` with extra metadata |
 | `registry_json` | none | A JSON list of `{name, path, status, note, progress, open_items}` from another project tracker |
