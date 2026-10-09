@@ -11,6 +11,8 @@
 
   "github": true,
   "cold_days": 120,
+  "big_after": 8,
+  "colors": { "my-big-project": 214, "client-site": "#7aa2f7" },
 
   "git_identity": { "name": "your-github-login", "email": "12345+your-github-login@users.noreply.github.com" },
   "template_dir": "~/.config/cproj/template",

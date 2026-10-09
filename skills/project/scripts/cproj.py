@@ -8,6 +8,9 @@ and sessions per project. Standard library only.
   cproj pick [QUERY | new NAME | status | cold [NAME] | + | -]
                                    what /project runs: choose, badge, brief (one marker line first)
   cproj new NAME [--where=local|server] [--github=private|public|none] [--desc=TEXT] [--force]
+  cproj sub [TOPIC | -] [--desc=TEXT]
+                                   subproject of the active project: list, switch to (or create) one, or leave it
+  cproj color NAME [COLOR | -]     badge colour of a project (256-colour number or #rrggbb; - = automatic)
   cproj off                        deselect the project of this session
   cproj handoff TEXT [--key=NAME]  save a handoff note (shows up in the next briefing)
   cproj status [--fetch]           every project with loose ends (dirty, unpushed, PRs, local vs server)
@@ -38,6 +41,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from zlib import crc32
 
 HOME = Path.home()
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "cproj"
@@ -62,6 +66,8 @@ DEFAULTS = {
     "picker": ["fuzzel", "--dmenu", "--index", "--no-sort", "-p", "  ", "-w", "40", "-l", "10"],
     "terminal": None,
     "temp_dir": "~/.local/share/cproj/temp",
+    "colors": {},
+    "big_after": 8,
 }
 SERVER_DEFAULTS = {"host": None, "roots": ["~"], "new_root": "~",
                    "exclude": ["backups", "*_backup*", "backup_*", "bin", "snap", "node_modules", ".*"]}
@@ -87,6 +93,9 @@ SSH = ["ssh", "-o", "ConnectTimeout=4", "-o", "BatchMode=yes", "-o", "LogLevel=E
 COLD_DAYS = CFG["cold_days"]
 TEMP_DIR = Path(os.path.expanduser(CFG["temp_dir"]))
 TEMP_MARK = ".cproj-temp"
+SUBS = STATE / "subs.json"
+# 256-colour codes for project badges, all light enough for black text and as text on a dark terminal
+PALETTE = [150, 117, 215, 183, 210, 114, 222, 147, 174, 80, 186, 140]
 
 
 def sh(cmd, timeout=10, cwd=None):
@@ -179,7 +188,7 @@ def local_projects():
         e = {"key": k, "name": d.name, "local": str(d),
              "desc": i.get("desc") or r.get("note") or "", "status": i.get("status") or r.get("status") or "",
              "entry": i.get("entry"), "updated": int(ts) if ts.isdigit() else int(d.stat().st_mtime),
-             "github": gh_slug(git_origin(d))}
+             "github": gh_slug(git_origin(d)), "worktree_of": worktree_of(d)}
         mark = d / TEMP_MARK
         if mark.is_file():
             try:
@@ -342,14 +351,14 @@ def load_all():
         e = (by_gh.get(item.get("github")) if item.get("github") else None) or by_key.get(item["key"])
         if e is None:
             e = by_key[item["key"]] = {"key": item["key"], "name": item["name"], "desc": "", "status": "", "updated": 0}
-        for f in ("local", "server", "github", "github_name", "entry", "desc", "status", "temp"):
+        for f in ("local", "server", "github", "github_name", "entry", "desc", "status", "temp", "worktree_of"):
             if item.get(f) and not e.get(f):
                 e[f] = item[f]
         e["updated"] = max(e["updated"], item.get("updated") or 0)
         if e.get("github"):
             by_gh[e["github"]] = e
     recent, rules = read_recent(), read_ignore()
-    items = [e for e in by_key.values() if not (rules and ignored(e, rules))]
+    items = [e for e in attach_subs(list(by_key.values())) if not (rules and ignored(e, rules))]
     items.sort(key=lambda e: (-recent.get(e["key"], 0), -e["updated"]))
     return items
 
@@ -362,6 +371,162 @@ def load_index(cold=False):
     if cold == "only":
         return [e for e in items if e["cold"]]
     return items if cold else [e for e in items if not e["cold"]]
+
+
+# ---------------------------------------------------------------- subprojects
+# A subproject is one strand of work inside a bigger project: a git worktree of it (found automatically,
+# e.g. ~/Projects/shop-checkout next to ~/Projects/shop) or a topic an agent named with `cproj sub`.
+
+def worktree_of(d):
+    """Main checkout of a git worktree folder — its .git is a file pointing into <main>/.git/worktrees/."""
+    try:
+        m = re.match(r"gitdir:\s*(.+)", (Path(d) / ".git").read_text().strip())
+    except OSError:
+        return None
+    g = (Path(d) / m.group(1)).resolve() if m else None
+    return str(g.parent.parent.parent) if g and g.parent.name == "worktrees" else None
+
+
+def read_subs():
+    try:
+        return json.loads(SUBS.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def touch_sub(pkey, skey, name, desc=None, worktree=False):
+    subs = read_subs()
+    s = subs.setdefault(pkey, {}).setdefault(skey, {"name": name, "created": int(time.time())})
+    s["last"] = int(time.time())
+    if desc:
+        s["desc"] = desc
+    if worktree:
+        s["worktree"] = True
+    STATE.mkdir(parents=True, exist_ok=True)
+    SUBS.write_text(json.dumps(subs, ensure_ascii=False, indent=1))
+
+
+def short_name(child, parent):
+    """`shop-checkout` in project `shop` → `checkout`."""
+    rest = child[len(parent):].lstrip("-_. ") if child.lower().startswith(parent.lower()) else ""
+    return rest or child
+
+
+def attach_subs(items):
+    """Fold worktree checkouts into their main project and add the topics agents created there."""
+    by_path = {e["local"]: e for e in items if e.get("local")}
+    out, topics = [], read_subs()
+    for e in items:
+        p = by_path.get(e.get("worktree_of"))
+        if p is None or p is e:
+            out.append(e)
+            continue
+        name = short_name(e["name"], p["name"])
+        p.setdefault("subs", {})[key_of(name)] = {"name": name, "kind": "worktree", "local": e["local"],
+                                                  "alias": e["key"], "updated": e["updated"], "desc": e.get("desc", "")}
+        p["updated"] = max(p["updated"], e["updated"])
+    for e in out:
+        for k, t in topics.get(e["key"], {}).items():
+            if t.get("worktree") and k not in e.get("subs", {}):
+                continue  # the worktree is gone
+            s = e.setdefault("subs", {}).setdefault(k, {"name": t["name"], "kind": "topic", "updated": 0})
+            s["desc"] = t.get("desc") or s.get("desc", "")
+            s["updated"] = max(s["updated"], t.get("last", 0))
+    return out
+
+
+def sub_items(items):
+    """One matchable entry per subproject: `parent/sub`, carrying the parent's sources."""
+    return [{**e, "key": f"{e['key']}/{k}", "name": f"{e['name']}/{s['name']}", "desc": s.get("desc", ""),
+             "local": s.get("local") or e.get("local"), "updated": s["updated"] or e["updated"], "subs": None,
+             "parent": e, "sub": k, "sub_name": s["name"], "alias": s.get("alias"), "kind": s["kind"]}
+            for e in items for k, s in sorted((e.get("subs") or {}).items())]
+
+
+def is_big(e):
+    """Big = worth splitting into subprojects: it already has some, or sessions keep coming back to it."""
+    return len(e.get("subs") or {}) >= 2 or sum(x["event"] == "pick" for x in read_events(e["key"])) >= CFG["big_after"]
+
+
+def color_of(key):
+    return CFG["colors"].get(key) or PALETTE[crc32(key.encode()) % len(PALETTE)]
+
+
+def sgr(color, bg=False):
+    """ANSI colour: a 256-colour number or #rrggbb."""
+    c = str(color)
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", c):
+        return f"{48 if bg else 38};2;{int(c[1:3], 16)};{int(c[3:5], 16)};{int(c[5:7], 16)}"
+    return f"{48 if bg else 38};5;{int(c) if c.isdigit() else PALETTE[0]}"
+
+
+def label(b):
+    return b["name"] + (f"/{b['sub_name']}" if b.get("sub") else "")
+
+
+def find_or_make_sub(p, name, desc=None):
+    """The subproject of p that `name` means, else a new topic. → (entry, created?)"""
+    hits = [x for x in sub_items([p]) if base_score({"key": x["sub"], "name": x["sub_name"]}, name) >= 80]
+    if len(hits) == 1:
+        if desc:
+            touch_sub(p["key"], hits[0]["sub"], hits[0]["sub_name"], desc)
+        return hits[0], False
+    k = key_of(short_name(key_of(name), p["key"]))[:40].strip("-") or "misc"
+    touch_sub(p["key"], k, k, desc)
+    return {**p, "key": f"{p['key']}/{k}", "name": f"{p['name']}/{k}", "desc": desc or "", "subs": None,
+            "updated": int(time.time()), "parent": p, "sub": k, "sub_name": k, "alias": None, "kind": "topic"}, True
+
+
+def sub_cmd(query, desc=None):
+    b = current_badge()
+    if not b:
+        return print("CPROJ: NO PROJECT active — pick one first (`cproj pick <name>`), then `cproj sub <topic>`.")
+    p = next((e for e in load_index(cold=True) if e["key"] == b["key"]), None)
+    if p is None:
+        return print(f"CPROJ: ERROR — project {b['key']} is no longer in the index.")
+    if not query:
+        return print(f"CPROJ: SUBPROJECTS of {p['name']}\n" + (subs_block(p, b.get("sub"), 999) or "none yet"))
+    if query in ("-", "none", "off"):
+        switch_to(p)
+        return print(f"CPROJ: SUB cleared — back to {p['name']}.")
+    e, new = find_or_make_sub(p, query, desc)
+    switch_to(e)
+    print(f"CPROJ: SUB {label(e['parent'])}/{e['sub_name']} ({'new' if new else 'existing'})"
+          + (f" — worktree {tilde(e['local'])}, work there" if e["kind"] == "worktree" else ""))
+
+
+def color_cmd(args):
+    """cproj color NAME [COLOR|-]: badge colour of a project (256-colour number or #rrggbb; - = automatic)."""
+    name, color = (args + [None])[:2] if args else (None, None)
+    if not name:
+        return print("usage: cproj color NAME [COLOR|-]")
+    sel, _ = resolve(load_index(cold=True), name)
+    if not sel:
+        return print(f"CPROJ: NO UNIQUE MATCH for “{name}”.")
+    p = sel.get("parent") or sel
+    if color:
+        if color != "-" and not re.fullmatch(r"#[0-9a-fA-F]{6}|\d{1,3}", color):
+            return print("CPROJ: ERROR — colour must be a 256-colour number (0–255) or #rrggbb.")
+        f = Path(os.environ.get("CPROJ_CONFIG", CONFIG_DIR / "config.json"))
+        try:
+            cfg = json.loads(f.read_text())
+        except FileNotFoundError:
+            cfg = {}
+        cfg.setdefault("colors", {}).pop(p["key"], None)
+        if color != "-":
+            cfg["colors"][p["key"]] = int(color) if color.isdigit() else color
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
+        CFG["colors"] = cfg["colors"]
+        for bf in SESSIONS.glob("*.json"):  # running sessions pick the new colour up at once
+            try:
+                b = json.loads(bf.read_text())
+                if b.get("key") == p["key"]:
+                    bf.write_text(json.dumps({**b, "color": color_of(p["key"])}, ensure_ascii=False))
+            except (OSError, ValueError):
+                pass
+    c = color_of(p["key"])
+    print(f"CPROJ: COLOR {p['name']} = {c}  \033[1;38;5;16;{sgr(c, bg=True)}m ◆ {p['name']} \033[0m")
 
 
 # ---------------------------------------------------------------- matching and formatting
@@ -386,14 +551,25 @@ HEADER = f"{'PROJECT':<28} L S G   SEEN  STATUS      DESCRIPTION"
 
 
 def row(e, width=70):
-    return (f"{e['name']:<28} {where(e)}  {ago(e['updated']):>5}  {(e.get('status') or '')[:11]:<11} "
-            f"{(e.get('desc') or '')[:width]}")
+    n = len(e.get("subs") or {})
+    desc = (f"[{n} subprojects] " if n else "") + (e.get("desc") or "")
+    return f"{e['name']:<28} {where(e)}  {ago(e['updated']):>5}  {(e.get('status') or '')[:11]:<11} {desc[:width]}"
 
 
 def score(e, q):
-    n, k = e["name"].lower(), e["key"]
+    split = 0
+    if e.get("parent") and len(q.split()) > 1:  # "shop checkout" = project "shop", subproject "checkout"
+        t = q.split()
+        split = max(min(score(e["parent"], " ".join(t[:i])), score({"key": e["sub"], "name": e["sub_name"]},
+                                                                    " ".join(t[i:]))) for i in range(1, len(t)))
+        split = max(70, split - 10) if split >= 60 else 0
+    return max(split, base_score(e, q))
+
+
+def base_score(e, q):
+    n, k = e["name"].lower(), key_of(e["key"])
     ql, qk = q.lower(), key_of(q)
-    if ql in (n, k) or qk == k:
+    if ql in (n, k) or qk == k or (e.get("alias") and qk == e["alias"]):
         return 100
     if k.startswith(qk) or n.startswith(ql):
         return 80
@@ -406,7 +582,10 @@ def score(e, q):
 
 
 def resolve(items, query):
-    ranked = [(s, e) for s, e in sorted(((score(e, query), e) for e in items), key=lambda t: -t[0]) if s > 0]
+    """Best project or subproject for a query; a subproject only competes where it matches better than its parent."""
+    pool = items + sub_items(items)
+    ranked = [(s, e) for s, e in sorted(((score(e, query), e) for e in pool), key=lambda t: -t[0])
+              if s > 0 and not (e.get("parent") and score(e["parent"], query) >= s)]
     if not ranked:
         return None, []
     best = [e for s, e in ranked if s == ranked[0][0]]
@@ -447,7 +626,8 @@ def current(fmt="plain"):
     if fmt == "json":
         return print(json.dumps(b or {}, ensure_ascii=False))
     if b:
-        print(f"◆ {b['name']}" if fmt == "plain" else f"{b['name']}\t{b.get('local') or b.get('server') or b.get('github')}")
+        print(f"◆ {b['name']}" + (f" › {b['sub_name']}" if b.get("sub") else "") if fmt == "plain"
+              else f"{label(b)}\t{b.get('local') or b.get('server') or b.get('github')}")
 
 
 def log_event(event, key, name, sid=None, **extra):
@@ -473,17 +653,25 @@ def current_badge(sid=None):
         return None
 
 
-def set_badge(e, sid=None):
+def set_badge(e, sid=None, keep=None):
+    """e = a project or a subproject entry (sub_items); the badge keeps the parent's key and name.
+    keep = the previous badge, whose start (time, HEAD) still counts — a topic named later in the same session."""
     sid = sid or session_id()
     if not sid:
         return False
-    head = sh(["git", "-C", e["local"], "rev-parse", "HEAD"], 3).strip() if e.get("local") else ""
+    p, sub = e.get("parent") or e, e.get("sub")
+    head = keep["head"] if keep else sh(["git", "-C", e["local"], "rev-parse", "HEAD"], 3).strip() if e.get("local") else ""
     SESSIONS.mkdir(parents=True, exist_ok=True)
     (SESSIONS / f"{sid}.json").write_text(json.dumps({
-        "key": e["key"], "name": e["name"], "where": where(e), "local": e.get("local"), "server": e.get("server"),
-        "github": e.get("github_name") or e.get("github"), "since": int(time.time()), "head": head}))
-    mark_recent(e["key"])
-    log_event("pick", e["key"], e["name"], sid)
+        "key": p["key"], "name": p["name"], "sub": sub, "sub_name": e.get("sub_name"), "color": color_of(p["key"]),
+        "where": where(e), "local": e.get("local"), "server": e.get("server"),
+        "github": e.get("github_name") or e.get("github"), "since": keep.get("since") or int(time.time()) if keep else int(time.time()),
+        "head": head},
+        ensure_ascii=False))
+    mark_recent(p["key"])
+    if sub:
+        touch_sub(p["key"], sub, e["sub_name"], worktree=e.get("kind") == "worktree")
+    log_event("pick", p["key"], p["name"], sid, **({"sub": sub} if sub else {}))
     return True
 
 
@@ -505,16 +693,19 @@ def work_summary(b):
 
 def left_project(b, verb):
     t = time.strftime("%H:%M", time.localtime(b.get("since", 0)))
-    return (f"CPROJ: {verb} {b['name']} (active since {t}; {work_summary(b) or 'no local checkout'})"
+    return (f"CPROJ: {verb} {label(b)} (active since {t}; {work_summary(b) or 'no local checkout'})"
             + "".join(f"\n{k}: {b[k]}" for k in ("local", "server", "github") if b.get(k)))
 
 
 def switch_to(sel):
     prev = current_badge()
-    if prev and prev["key"] != sel["key"]:
+    p = sel.get("parent") or sel
+    if prev and (prev["key"] != p["key"] or prev.get("sub") and prev["sub"] != sel.get("sub")):
         print(left_project(prev, "LEFT"))
-        log_event("off", prev["key"], prev["name"])
-    return set_badge(sel)
+        log_event("off", prev["key"], prev["name"], **({"sub": prev["sub"]} if prev.get("sub") else {}))
+        prev = None
+    same_tree = prev and prev["key"] == p["key"] and prev.get("local") == sel.get("local") and prev.get("head") is not None
+    return set_badge(sel, keep=prev if same_tree else None)
 
 
 def off():
@@ -533,8 +724,10 @@ def handoff(text, key=None):
         print("CPROJ: NO PROJECT active — a handoff needs --key=<project>.")
         return
     key = key or b["key"]
-    log_event("handoff", key, b["name"] if b and b["key"] == key else key, text=text.strip())
-    print(f"CPROJ: HANDOFF saved for {key}.")
+    sub = b.get("sub") if b and b["key"] == key else None
+    log_event("handoff", key, b["name"] if b and b["key"] == key else key, text=text.strip(),
+              **({"sub": sub} if sub else {}))
+    print(f"CPROJ: HANDOFF saved for {key}" + (f"/{b['sub_name']}." if sub else "."))
 
 
 def session_end():
@@ -545,7 +738,7 @@ def session_end():
         return
     b = current_badge(sid)
     if b:
-        log_event("end", b["key"], b["name"], sid,
+        log_event("end", b["key"], b["name"], sid, **({"sub": b["sub"]} if b.get("sub") else {}),
                   text=f"Session ended without a handoff ({work_summary(b) or 'state unknown'}).")
         clear_badge(sid)
 
@@ -559,11 +752,19 @@ def statusline():
     b = current_badge(data.get("session_id") or "-")
     if b:
         loc = "local" if b.get("local") else "server" if b.get("server") else "GitHub"
-        parts = [f"\033[1;38;5;16;48;5;150m ◆ {b['name']} \033[0;38;5;150m {loc}\033[0m"]
-    else:  # nothing picked: the working directory may still tell
+        c = color_of(b["key"])  # from the config, so a changed colour shows at once
+        parts = [f"\033[1;38;5;16;{sgr(c, bg=True)}m ◆ {b['name']} \033[0m"
+                 + (f"\033[1;{sgr(c)}m › {b['sub_name']}\033[0m" if b.get("sub") else "")
+                 + f"\033[2m {loc}\033[0m"]
+    else:  # nothing picked: the working directory may still tell — a worktree as parent › sub
         base = next((d for d in PROJECT_DIRS if cwd.startswith(f"{d}/")), None)
         name = cwd[len(str(base)) + 1:].split("/")[0] if base else ""
-        parts = [f"\033[38;5;150m◇ {name}\033[0m" if name else "\033[2m◇ no project\033[0m"]
+        main = worktree_of(base / name) if name else None
+        if main:
+            pname = Path(main).name
+            name = f"{pname} › {short_name(name, pname)}"
+        parts = [f"\033[{sgr(color_of(key_of(Path(main).name if main else name)))}m◇ {name}\033[0m" if name
+                 else "\033[2m◇ no project\033[0m"]
     model = (data.get("model") or {}).get("display_name")
     parts += [f"\033[2m{x}\033[0m" for x in (model, tilde(cwd) if cwd else None) if x]
     print("  ".join(parts))
@@ -599,9 +800,11 @@ def transcript_index():
     return new
 
 
-def project_sessions(key, limit=3):
-    idx = transcript_index()
-    sids = {sid for sid, t in idx.items() if key in t["keys"]} | {e["sid"] for e in read_events(key) if e.get("sid")}
+def project_sessions(key, limit=3, sub=None, aliases=()):
+    """Sessions that ran in the project's folders (aliases = its worktrees) or picked it (only this sub if given)."""
+    idx, keys = transcript_index(), ({key} if not sub else set()) | set(aliases)
+    sids = ({sid for sid, t in idx.items() if keys & set(t["keys"])}
+            | {e["sid"] for e in read_events(key) if e.get("sid") and (not sub or e.get("sub") == sub)})
     return sorted(((idx[s]["mtime"], s, idx[s]) for s in sids if s in idx and s != session_id()), reverse=True)[:limit]
 
 
@@ -697,14 +900,32 @@ def brief_github(e):
     return "\n".join(out)
 
 
+def subs_block(p, current=None, limit=15):
+    subs = sorted((p.get("subs") or {}).items(), key=lambda t: -t[1]["updated"])
+    if not subs:
+        return ""
+    out = [f"## Subprojects of {p['name']} (newest first; `cproj sub <name>` switches this session to one)"]
+    for k, x in subs[:limit]:
+        where_ = f"worktree {tilde(x['local'])}" if x["kind"] == "worktree" else "topic"
+        out.append(f"- {x['name']} · {where_} · {ago(x['updated'])}" + (f" · {x['desc']}" if x.get("desc") else "")
+                   + ("   ◀ this session" if k == current else ""))
+    if len(subs) > limit:
+        out.append(f"- … and {len(subs) - limit} older ones (`cproj sub` lists all)")
+    return "\n".join(out)
+
+
 def history_block(e):
-    out = []
-    notes = [x for x in read_events(e["key"]) if x["event"] in ("handoff", "end")][-3:]
+    p, sub, out = e.get("parent") or e, e.get("sub"), []
+    evs = [x for x in read_events(p["key"]) if x["event"] in ("handoff", "end")]
+    notes = [x for x in evs if x.get("sub") == sub][-3:] if sub else evs[-4:]
+    if sub:  # what happened elsewhere in the project still matters a little
+        notes = [x for x in evs if x.get("sub") != sub][-1:] + notes
     if notes:
         out.append("## Recent handoffs")
-        out += [f"- {since(x['ts'])} ({'session end' if x['event'] == 'end' else 'handoff'}): {x['text']}"
-                for x in reversed(notes)]
-    sess = project_sessions(e["key"])
+        out += [f"- {since(x['ts'])} ({'session end' if x['event'] == 'end' else 'handoff'}"
+                f"{' · ' + x['sub'] if x.get('sub') else ''}): {x['text']}" for x in reversed(notes)]
+    aliases = [e["alias"]] if sub and e.get("alias") else [] if sub else [x["alias"] for x in (p.get("subs") or {}).values() if x.get("alias")]
+    sess = project_sessions(p["key"], sub=sub, aliases=aliases)
     if sess:
         out.append("## Recent Claude sessions (resume in a new terminal)")
         out += [f"- {since(m)} · “{t['title'] or 'untitled'}” · `cd {tilde(t['start'])} && claude -r {sid}`"
@@ -713,8 +934,14 @@ def history_block(e):
 
 
 def brief(e):
-    head = (f"# Project: {e['name']}   [{where(e)} = local/server/GitHub]   last active: {since(e['updated'])}"
-            + (f"\n{e['desc']}" if e.get("desc") else "") + (f"\nStatus: {e['status']}" if e.get("status") else ""))
+    p = e.get("parent") or e
+    title = f"{p['name']} › {e['sub_name']}  (subproject, {e['kind']})" if e.get("sub") else e["name"]
+    descs = [e.get("desc"), p.get("desc")] if e.get("sub") else [e.get("desc")]
+    head = (f"# Project: {title}   [{where(e)} = local/server/GitHub]   last active: {since(e['updated'])}"
+            + "".join(f"\n{d}" for d in dict.fromkeys(descs) if d)
+            + (f"\nStatus: {p['status']}" if p.get("status") else ""))
+    subs = subs_block(p, e.get("sub"))
+    head += f"\n\n{subs}" if subs else ""
     fns = [f for f, k in ((brief_local, "local"), (brief_server, "server"), (brief_github, "github")) if e.get(k)]
     with ThreadPoolExecutor(3) as ex:
         parts = list(ex.map(lambda f: f(e), fns))
@@ -752,9 +979,27 @@ def git_cmds():
     return [["init", "-q", "-b", "main"], *cfg, ["add", "-A"], ["commit", "-q", "-m", "Initial project skeleton"]]
 
 
+def part_of(items, name):
+    """`shop-payments` while `shop` exists: a subproject, not a new project. → (parent, rest) or None"""
+    k = key_of(name)
+    par = max((e for e in items if k.startswith(e["key"] + "-") and not e.get("temp")), key=lambda e: len(e["key"]),
+              default=None)
+    return (par, k[len(par["key"]) + 1:]) if par else None
+
+
+def subproject_hint(hit):
+    p, rest = hit
+    return (f"CPROJ: SUBPROJECT OF {p['name']} — this is a part of {p['name']}, not a new project. "
+            f"Use `cproj pick \"{p['name']} {rest}\"` (or `cproj sub {rest}` while {p['name']} is active); "
+            f"`--force` creates a separate project anyway.")
+
+
 def new_project(name, where_="local", github="none", desc="", force=False):
     items = load_index(cold=True)  # duplicates count in cold storage too
     k = key_of(name)
+    hit = part_of(items, name)
+    if hit and not force:
+        return print(subproject_hint(hit))
     similar = [e for e in items if score(e, name) >= 60 or (len(k) > 3 and k in e["key"])]
     if similar and not force:
         print(f"CPROJ: SIMILAR EXISTS — nothing created. Matches for “{name}”:")
@@ -908,6 +1153,7 @@ def open_prs():
 
 def status(fetch=False):
     items = load_index()
+    items += [x for x in sub_items(items) if x["kind"] == "worktree"]
     local = [e for e in items if e.get("local")]
     if fetch:
         with ThreadPoolExecutor(12) as ex:
@@ -930,14 +1176,14 @@ def status(fetch=False):
                 notes.append("no valid branch (broken or no commits)")
             elif not s["upstream"] and e.get("github"):
                 notes.append(f"branch {s['branch']} has no upstream")
-            sv = server.get(e.get("server") or "")
+            sv = None if e.get("parent") else server.get(e.get("server") or "")
             if sv and sv["head"] and sv["head"] != s["head"]:
                 known = subprocess.run(["git", "-C", e["local"], "cat-file", "-e", sv["head"] + "^{commit}"],
                                        capture_output=True).returncode == 0
                 notes.append("server behind local" if known else "server has commits local doesn't know")
             if sv and sv["dirty"]:
                 notes.append(f"server: {sv['dirty']} uncommitted")
-        mine = [p for p in prs if e.get("github") and p[0].lower() == e["github"]]
+        mine = [p for p in prs if e.get("github") and p[0].lower() == e["github"] and not e.get("parent")]
         if mine:
             others = [p for p in mine if p[2].lower() != me.lower()]
             notes.append(f"{len(mine)} open PRs" + (f" ({len(others)} by others → review)" if others else ""))
@@ -1009,6 +1255,9 @@ def pick(query, items):
         return pick_cold(rest)
     if word in ("new", "neu"):  # only checks; creating happens after asking, via `cproj new`
         print(f"CPROJ: NEW {rest or '(name missing)'}")
+        hit = rest and part_of(load_index(cold=True), rest)
+        if hit:
+            return print(subproject_hint(hit))
         similar = [e for e in load_index(cold=True) if rest and (score(e, rest) >= 30 or (len(rest) > 3 and key_of(rest) in e["key"]))]
         print(("Similar existing projects:\n" + "\n".join(row(e) for e in similar[:6])) if similar
               else "No similar projects locally, on the server or on GitHub.")
@@ -1021,6 +1270,13 @@ def pick(query, items):
         sel, cands = items[i], []
     elif query:
         sel, cands = resolve(items, query)
+        if sel is None:  # "shop payments": an exactly named project plus a new topic
+            t = query.split()
+            for i in range(len(t) - 1, 0, -1):
+                par = [e for e in items if base_score(e, " ".join(t[:i])) == 100]
+                if len(par) == 1:
+                    sel, cands = find_or_make_sub(par[0], " ".join(t[i:]))[0], []
+                    break
     else:
         recent = read_recent()
         active = [e for e in items if e["key"] in recent or time.time() - e["updated"] < 30 * 86400]
@@ -1042,6 +1298,10 @@ def pick(query, items):
         return
     ok = switch_to(sel)
     print(f"CPROJ: PICKED {sel['name']}" + ("" if ok else " (no session id → no badge)"))
+    if not sel.get("sub") and is_big(sel):
+        print(f"CPROJ: SUBPROJECT NEEDED — {sel['name']} is a big project. As soon as this session's topic is clear, "
+              f"run `cproj sub <topic>`: an existing subproject if one fits (list below), else a new 1–3-word "
+              f"kebab-case name without the project name or a date. Never create a separate project for it.")
     print(brief(sel))
 
 
@@ -1091,14 +1351,20 @@ def main(argv):
                            opt("github", "none"), opt("desc", ""), "--force" in args)
     if cmd == "temp":
         return temp_project(re.sub(r"[^A-Za-z0-9._-]+", "-", query).strip("-"), opt("desc", ""))
+    if cmd == "sub":
+        return sub_cmd(query, opt("desc"))
+    if cmd == "color":
+        return color_cmd([a for a in args if not a.startswith("--")])
     if cmd == "drop":
         return drop_temp(query)
     if cmd == "keep":
         return keep_temp(query)
     if cmd == "list":
         items = load_index(cold=True if "--json" in args or "--all" in args else "only" if "--cold" in args else False)
-        return print(json.dumps(items, ensure_ascii=False, indent=1) if "--json" in args
-                     else HEADER + "\n" + "\n".join(row(e) for e in items))
+        if "--json" in args:  # subprojects also as flat entries (worktrees under their folder key), marked "parent"
+            flat = [{**x, "key": x.get("alias") or x["key"], "parent": x["parent"]["key"]} for x in sub_items(items)]
+            return print(json.dumps(items + flat, ensure_ascii=False, indent=1))
+        return print(HEADER + "\n" + "\n".join(row(e) for e in items))
     if cmd == "pick":
         return pick(query, load_index())
     if cmd in ("brief", "set"):

@@ -34,7 +34,8 @@ reads your first message — in one shell call, typically under a second — and
 | **A briefing, not a tour** | Git state and recent commits, `CLAUDE.md` (with `@imports` resolved), status docs such as `HANDOFF.md` / `PROGRESS.md`, open issues and PRs, what differs on the server. |
 | **Pick in the session** | `/project` asks inside Claude Code; `/project weath` jumps straight in; ambiguous input gets a short multiple choice. |
 | **Grill me** | When the next step is not obvious, Claude asks one pointed question per round until the task fits in one sentence plus a done criterion. |
-| **Status line badge** | `◆ weather-station  local` while a project is active; `◇ name` when you are merely inside a project folder. |
+| **Status line badge** | `◆ weather-station  local` while a project is active, in the project's own colour; `◆ shop › checkout` in a subproject; `◇ name` when you are merely inside a project folder. |
+| **Subprojects** | Big projects split into strands of work: git worktrees of a project fold into it automatically, and agents name the session's topic with `cproj sub payments` (reusing an existing one if it fits). Handoffs and sessions stay per subproject; `/project new shop-payments` is caught as a part of `shop`. |
 | **Handoffs** | Switching projects or leaving with `/project-off` writes a short handoff note; closing the terminal records a mechanical one (new commits, uncommitted files). The next briefing starts with it. |
 | **Resume sessions** | The briefing lists the last Claude sessions that touched the project, with a ready `claude -r <id>`. |
 | **`/project status`** | Every project with loose ends — uncommitted work, unpushed commits, branches that never reached main, PRs waiting for your review, server vs local drift. |
@@ -158,6 +159,7 @@ What differs outside Claude Code:
 |---|---|
 | `/project` or `ctrl+x p` | Choose from recently used and active projects, or type a search term |
 | `/project weather` | Search and jump in (exact, prefix, substring, description, fuzzy) |
+| `/project shop checkout` | Straight into a subproject of `shop` — an existing one, or a new topic if `shop` is named exactly |
 | `/project new garden-bot` | Duplicate check everywhere → a few questions → project created and picked |
 | `/project status` | Every loose end across all projects (`/project status fetch` fetches remotes first) |
 | `/project cold` · `/project cold fossil` | Show cold storage · wake a project |
@@ -170,6 +172,8 @@ What differs outside Claude Code:
 | `cproj status [--fetch]` | Same overview as `/project status` |
 | `cproj sessions NAME` | Claude sessions that worked on a project |
 | `cproj ignore 'server:*backup*'` | Hide projects by name or path glob, optionally for one source |
+| `cproj sub [TOPIC\|-] [--desc=TEXT]` | Subprojects of the active project: list, switch to (or create) one, `-` = back to the whole project |
+| `cproj color NAME [COLOR\|-]` | Badge colour of a project: 256-colour number or `#rrggbb`, `-` = automatic (stable per project) |
 | `cproj current [--json\|--tsv]` | The active project of this session — for prompts and status bars of any tool |
 | `cproj launch` | Desktop launcher — bind it to a key, e.g. niri: `Mod+P { spawn "cproj" "launch"; }` |
 | `cproj refresh` | Reload the server/GitHub cache now |
@@ -196,6 +200,8 @@ Copy [`config.example.json`](config.example.json) to `~/.config/cproj/config.jso
 | `index_md` | none | A markdown table `\| **name** \| description \| status \| … \| entry file \|` with extra metadata |
 | `registry_json` | none | A JSON list of `{name, path, status, note, progress, open_items}` from another project tracker |
 | `picker` | fuzzel | dmenu-style command that prints the chosen **index** |
+| `colors` | automatic | `{"<project>": 214 or "#rrggbb"}` badge colours (`cproj color` writes this) |
+| `big_after` | `8` | After how many picks a project counts as big and agents are asked to name a subproject |
 | `terminal` | first found | Terminal command for the launcher; `{dir}` and `{title}` are filled in |
 
 ## Privacy
@@ -209,6 +215,7 @@ working directories of past sessions. Its own data stays on your machine:
 | `~/.config/cproj/` | `config.json`, `ignore` |
 | `~/.cache/cproj/` | index caches, per-session badges, recent picks — safe to delete |
 | `~/.local/state/cproj/events.jsonl` | picks, handoff notes, session ends |
+| `~/.local/state/cproj/subs.json` | subprojects agents named, with description and last use |
 
 What ends up in Claude's context is what you would otherwise paste yourself: git logs, project docs, PR titles.
 

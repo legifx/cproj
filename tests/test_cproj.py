@@ -213,6 +213,66 @@ class CprojTest(unittest.TestCase):
         self.assertIn("Registry: 40 %", out)
         self.assertIn("- Write docs", out)
 
+    # ------------------------------------------------------------ subprojects
+
+    def worktree(self, main, name):
+        subprocess.run(["git", "worktree", "add", "-q", "-b", name, str(self.projects / name)], cwd=main,
+                       env=self.env, check=True, capture_output=True)
+
+    def test_worktrees_fold_into_their_project(self):
+        shop = self.project("shop")
+        self.worktree(shop, "shop-checkout")
+        listing = self.run_cproj("list")
+        self.assertNotIn("shop-checkout", listing)
+        self.assertIn("[1 subprojects]", listing)
+        out = self.run_cproj("pick", "shop checkout")
+        self.assertTrue(out.startswith("CPROJ: PICKED shop/checkout"), out)
+        b = self.badge()
+        self.assertEqual((b["key"], b["sub"], b["local"]), ("shop", "checkout", str(self.projects / "shop-checkout")))
+        self.assertTrue(self.run_cproj("pick", "shop-checkout").startswith("CPROJ: PICKED shop/checkout"))
+        self.assertTrue(self.run_cproj("pick", "shop").startswith("CPROJ: LEFT shop/checkout"))
+        flat = json.loads(self.run_cproj("list", "--all", "--json"))
+        self.assertIn({"key": "shop-checkout", "parent": "shop"},
+                      [{"key": x["key"], "parent": x.get("parent")} for x in flat if x.get("parent")])
+
+    def test_sub_topics_reused_and_handoffs_kept_apart(self):
+        self.project("shop")
+        self.run_cproj("pick", "shop")
+        self.assertIn("(new)", self.run_cproj("sub", "payment webhooks", "--desc=Stripe events"))
+        self.assertEqual(self.badge()["sub"], "payment-webhooks")
+        self.run_cproj("handoff", "Webhook signature check done.")
+        self.assertIn("(existing)", self.run_cproj("sub", "payment"))
+        self.assertIn("payment-webhooks · topic", self.run_cproj("sub"))
+        self.assertIn("SUB cleared", self.run_cproj("sub", "-"))
+        self.assertIsNone(self.badge()["sub"])
+        out = self.run_cproj("pick", "shop newsletter")
+        self.assertTrue(out.startswith("CPROJ: PICKED shop/newsletter"), out)
+        self.assertIn("(handoff · payment-webhooks): Webhook signature", out)  # elsewhere in the project, labelled
+        self.assertIn("Webhook signature", self.run_cproj("pick", "shop payment-webhooks"))
+        self.assertTrue(self.run_cproj("sub", "x", env={"CLAUDE_CODE_SESSION_ID": "other"}).startswith("CPROJ: NO PROJECT"))
+
+    def test_big_project_asks_for_a_subproject(self):
+        self.project("shop")
+        self.config({"big_after": 2})
+        self.assertNotIn("SUBPROJECT NEEDED", self.run_cproj("pick", "shop"))
+        self.assertIn("SUBPROJECT NEEDED", self.run_cproj("pick", "shop"))
+
+    def test_new_project_that_is_part_of_another(self):
+        self.project("shop")
+        self.assertIn("SUBPROJECT OF shop", self.run_cproj("pick", "new shop-stripe"))
+        self.assertIn("SUBPROJECT OF shop", self.run_cproj("new", "shop-stripe"))
+        self.assertFalse((self.projects / "shop-stripe").exists())
+
+    def test_statusline_colour_and_subproject(self):
+        self.project("shop")
+        self.run_cproj("pick", "shop")
+        self.run_cproj("sub", "checkout")
+        self.assertIn("COLOR shop = #ff8800", self.run_cproj("color", "shop", "#ff8800"))
+        line = self.run_cproj("statusline", stdin=json.dumps({"session_id": "test-session", "cwd": "/x"}))
+        self.assertIn("48;2;255;136;0m ◆ shop", line)
+        self.assertIn("› checkout", line)
+        self.assertEqual(self.run_cproj("current").strip(), "◆ shop › checkout")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

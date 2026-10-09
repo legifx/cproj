@@ -1,6 +1,6 @@
 ---
 name: project
-description: Switch the session to one of the user's projects (local, SSH server, GitHub — searchable), create one, wake one from cold storage, or list every loose end; brief where it stands and what comes next, then keep working on it. Use only when the user explicitly calls /project or asks to open, switch to or create a project. `/project [query | new NAME | status | cold [NAME] | + | -]`
+description: Switch the session to one of the user's projects (local, SSH server, GitHub — searchable), create one, wake one from cold storage, or list every loose end; brief where it stands and what comes next, then keep working on it. Use only when the user explicitly calls /project or asks to open, switch to or create a project. Projects can have subprojects (`/project shop checkout`). `/project [query | new NAME | status | cold [NAME] | + | -]`
 argument-hint: "[query | new NAME | status | cold [NAME] | + | -]"
 disable-model-invocation: true
 allowed-tools: Bash(cproj:*), Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/cproj.py:*)
@@ -32,7 +32,9 @@ Everything before a project is chosen must be **fast**: no other tools, no readi
 | `CPROJ:` | What you do |
 |---|---|
 | `LEFT <old> (…)` | Printed before `PICKED`: the session switched projects. First do the **handoff** for `<old>` (below), then continue with the new one. |
-| `PICKED <name>` | The briefing follows → step 1. |
+| `PICKED <name>` | The briefing follows → step 1. `<project>/<sub>` = a subproject was picked (see **Subprojects**). |
+| `SUBPROJECT NEEDED` | Printed after `PICKED` for a big project → **Subprojects** below, as soon as the topic is clear. |
+| `SUBPROJECT OF <project>` | The name is a part of an existing project → do not create a project; pick `"<project> <rest>"` instead. |
 | `CHOOSE` | Immediately **Ask** “Which project?”: the top 3 of the list (label = name, description = `L/S/G · seen … · description`, short) plus an option **“Create a new project”**. Question text: “Or type a name or search term under *Other*.” |
 | `AMBIGUOUS` | Immediately **Ask** with the 4 best matches (Other = search differently). |
 | `NO MATCH` | Immediately **Ask**: **“Create: <query>”** (first), the 2 closest projects, “Search differently”. |
@@ -59,6 +61,20 @@ again a `CPROJ:` line, same table); “Create a new project” → Creating.
    `--force` only when they explicitly want it.
 4. Continue with step 1 and go straight to **grill me** about the goal and the first milestone; write the result into
    `docs/PROGRESS.md` (status + log) and CLAUDE.md and commit.
+
+### Subprojects
+
+Big projects get one subproject per strand of work, so sessions stay apart in the status line
+(`◆ shop › checkout`) and handoffs land where they belong. Git worktrees of a project are subprojects automatically.
+
+- On `SUBPROJECT NEEDED`: as soon as you know what this session is about (often the user's first real request),
+  run `cproj sub <topic>` — no question to the user. Reuse a fitting subproject from the briefing's list
+  (`cproj sub stripe` matches `stripe-webhooks`); otherwise a new 1–3-word kebab-case topic, without the project name
+  or a date. One subproject per strand of work, not per session.
+- When the topic changes clearly mid-session: handoff for the old one, then `cproj sub <new topic>`.
+- A worktree subproject: work in its folder (the badge path). `cproj sub -` returns to the project as a whole.
+- Never create a separate project (`cproj new`, a `<project>-<topic>` folder that is not a worktree) for a part of an
+  existing one.
 
 ### Handoff (when switching and on `/project-off`)
 
@@ -109,5 +125,5 @@ the task in one sentence plus a done criterion: say it, then start.
 
 Work on the project normally and follow its own rules (CLAUDE.md / AGENTS.md, HANDOFF.md, git identity, commit rules).
 
-Switch: another `/project <other>` — do the handoff first. Deselect: `/project-off`. `/project +` opens the GUI picker
+Switch: another `/project <other>` — do the handoff first. Subproject: `cproj sub <topic>` (list: `cproj sub`). Deselect: `/project-off`. `/project +` opens the GUI picker
 instead. Refresh the cache (new repo on the server/GitHub): `cproj refresh`.
