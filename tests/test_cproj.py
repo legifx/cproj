@@ -45,7 +45,7 @@ class CprojTest(unittest.TestCase):
             (d / f).write_text(c)
         date = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - age_days * DAY))
         env = {**self.env, "GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date}
-        for c in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "init"]):
+        for c in (["init", "-q"], ["symbolic-ref", "HEAD", "refs/heads/main"], ["add", "-A"], ["commit", "-q", "-m", "init"]):
             subprocess.run(["git", *c], cwd=d, env=env, check=True, capture_output=True)
         return d
 

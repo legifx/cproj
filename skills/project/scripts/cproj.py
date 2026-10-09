@@ -976,7 +976,7 @@ def skeleton(name, desc):
 def git_cmds():
     ident = CFG["git_identity"] or {}
     cfg = [["config", "user.name", ident["name"]], ["config", "user.email", ident["email"]]] if ident else []
-    return [["init", "-q", "-b", "main"], *cfg, ["add", "-A"], ["commit", "-q", "-m", "Initial project skeleton"]]
+    return [["init", "-q"], ["symbolic-ref", "HEAD", "refs/heads/main"], *cfg, ["add", "-A"], ["commit", "-q", "-m", "Initial project skeleton"]]
 
 
 def part_of(items, name):
